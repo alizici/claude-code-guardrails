@@ -1,0 +1,28 @@
+{
+  "_info": [
+    "CODE SHIELD lock list (guardrails/shield.py). Each lock: a file (and optionally a region between '# SHIELD: <name>' and '# SHIELD-END: <name>' in any comment style), a reason, the tests that protect it and the approved fingerprint.",
+    "The fingerprint is never written by hand: 'python3 guardrails/shield.py approve <name> --reason \"...\"' writes it and logs the change to docs/SHIELD_LOG.md.",
+    "New lock: add it here with an empty fingerprint, mark the region in the code, then approve. {tests} in a runner command is replaced by the lock's test names."
+  ],
+  "runners": {
+    "unit": {
+      "run": "python3 -m unittest {tests}",
+      "cwd": "examples/demo/tests",
+      "timeout": 300
+    }
+  },
+  "locks": [
+    {
+      "name": "discount-rule",
+      "file": "examples/demo/src/pricing.py",
+      "region": "discount-rule",
+      "reason": "Pricing rule agreed with the business: 1% per loyalty year, capped at 10%, nothing under 50. A silent change here costs money.",
+      "tests": {
+        "unit": [
+          "test_pricing.DiscountRule"
+        ]
+      },
+      "fingerprint": "4a45f18e6fb13aca"
+    }
+  ]
+}

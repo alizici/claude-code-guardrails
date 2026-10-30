@@ -1,0 +1,94 @@
+{
+  "_info": [
+    "Guard config read by guardrails/guard.py and guardrails/deletion_guard.py. Keys starting with '_' are ignored.",
+    "Validate after every change: python3 guardrails/guard.py check  (last line must be 'ok').",
+    "Gate exit 0 = pass; 3, 126, 127, missing tool and timeout = warning only; anything else = failing (the turn can't end)."
+  ],
+
+  "generated": {
+    "paths": ["**/*.g.dart", "**/*.freezed.dart", "docs/SHIELD_LOG.md"],
+    "regenerate": "dart run build_runner build (code) · python3 guardrails/shield.py approve (shield log)"
+  },
+
+  "block": [
+    {
+      "pattern": "\\bgit\\s+push\\b[^;&|\\n]*(?:--force(?![-\\w])|\\s-f\\b)",
+      "reason": "Force push is closed to the agent (history isn't rewritten); ask the user if it's really needed.",
+      "examples": {
+        "match": ["git push --force origin main", "git push -f origin main", "git push origin main --force"],
+        "no_match": ["git push origin main --force-with-lease", "git push -q origin main && git worktree remove --force wt"]
+      }
+    },
+    {
+      "pattern": "\\bgit\\s+commit\\b[^;&|\\n]*--no-verify\\b",
+      "reason": "--no-verify skips the code shield's commit hook; locked code can't be committed without approval.",
+      "examples": {
+        "match": ["git commit --no-verify -m x", "git commit -q -m x --no-verify"],
+        "no_match": ["git commit -m x && git push origin main --no-verify"]
+      }
+    },
+    {
+      "pattern": "\\bgit\\s+(?:reset\\s+--hard|clean\\s+-[a-zA-Z]*f|checkout\\s+--\\s+\\.)",
+      "reason": "This throws away uncommitted work. Ask the user first.",
+      "examples": {
+        "match": ["git reset --hard HEAD~1", "git clean -fd", "git checkout -- ."],
+        "no_match": ["git reset --soft HEAD~1", "git checkout -- src/a.py"]
+      }
+    }
+  ],
+
+  "ask": [
+    {
+      "pattern": "shield\\.py\\b.*\\bapprove\\b",
+      "reason": "Approving a change to locked critical code is the user's decision: check the reason and that the lock tests passed.",
+      "examples": {
+        "match": ["python3 guardrails/shield.py approve discount-rule --reason \"x\""],
+        "no_match": ["python3 guardrails/shield.py test discount-rule", "grep approve guardrails/shield.py"]
+      }
+    }
+  ],
+
+  "ask_paths": [
+    {"glob": "shield.json", "reason": "The lock list: loosening it or editing a fingerprint by hand is the user's decision."},
+    {"glob": ".claude/agents/**", "reason": "Role definitions: changing what a role may do is the user's decision."}
+  ],
+
+  "roles": {
+    "card-auditor": {"write": [], "note": "Read-only: report in the final message."},
+    "test-writer": {
+      "write": ["tests/**", "**/tests/**", "**/test/**", "**/*_test.*", "**/test_*.py"],
+      "note": "The test writer only writes tests. Production code is the implementer's job."
+    },
+    "implementer": {
+      "write": ["src/**", "**/src/**", "lib/**", "**/lib/**", "docs/OPEN_QUESTIONS.md"],
+      "note": "The implementer doesn't touch tests. If a test looks wrong, stop and report it."
+    },
+    "reviewer": {"write": [], "note": "Read-only: the reviewer judges the work, it doesn't fix it."}
+  },
+
+  "gates": [
+    {
+      "name": "unit tests",
+      "on": ["examples/demo/**/*.py"],
+      "run": "cd examples/demo && python3 -m unittest discover -s tests -q",
+      "timeout": 120
+    },
+    {
+      "name": "code shield",
+      "on": ["examples/demo/src/**", "shield.json"],
+      "run": ["python3", "guardrails/shield.py", "gate"],
+      "timeout": 300
+    },
+    {
+      "name": "guardrails self-tests",
+      "on": ["guardrails/**", "tests/**"],
+      "run": "python3 -m unittest discover -s tests -q",
+      "timeout": 300
+    }
+  ],
+
+  "deletion_guard": {
+    "rewrite": "deny",
+    "important_deletion": "deny"
+  }
+}

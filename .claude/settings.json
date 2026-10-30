@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/guardrails/guard.py\" turn", "timeout": 10},
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/guardrails/deletion_guard.py\" turn", "timeout": 30}
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/guardrails/guard.py\" protect", "timeout": 10}
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/guardrails/deletion_guard.py\" before", "timeout": 10}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/guardrails/guard.py\" record", "timeout": 10},
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/guardrails/deletion_guard.py\" after", "timeout": 10}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/guardrails/guard.py\" gates", "timeout": 600,
+           "statusMessage": "Running end-of-turn gates"},
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/guardrails/deletion_guard.py\" gate", "timeout": 60}
+        ]
+      }
+    ]
+  }
+}
