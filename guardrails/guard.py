@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Claude Code guard hook. Config: guardrails.json in the project root.
 
-Wired from `.claude/settings.json` with one subcommand per hook event:
+Wired with one subcommand per hook event, from the plugin's hooks/hooks.json (plugin install) or the
+project's `.claude/settings.json` (guardrails/ copied into the project):
 
   turn     UserPromptSubmit   Snapshots the working tree (git). At the end of the turn the hook
                               knows which files changed, no matter which tool changed them
@@ -49,9 +50,12 @@ try:
 except ImportError:  # Windows: no locking
     fcntl = None
 
-# Located from the script itself: CLAUDE_PROJECT_DIR can point to an old folder if the session moved.
-ROOT = os.environ.get("GUARDRAILS_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(ROOT, "guardrails.json")
+sys.dont_write_bytecode = True
+import _paths  # noqa: E402  (next to this script)
+
+# The project root: set in main() (see _paths.project_root). A copy inside a project is located from the
+# script itself, because CLAUDE_PROJECT_DIR can point to an old folder if the session moved.
+ROOT = CONFIG_PATH = None
 MAX_BLOCKS = 3
 
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
@@ -127,6 +131,12 @@ MSG = {
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def set_root(root):
+    global ROOT, CONFIG_PATH
+    ROOT = os.path.realpath(root)
+    CONFIG_PATH = os.path.join(ROOT, _paths.CONFIG)
 
 
 def emit(obj):
@@ -700,11 +710,24 @@ def path_values(tool_input):
 
 
 def role_of(event, cfg):
-    """The subagent's role (its agent type), when it has rules in the config."""
+    """The subagent's role (its agent type), when it has rules in the config. A plugin's agents come with
+    the plugin's name in front (`code-guardrails:test-writer`); the role is the part after it."""
     if not event.get("agent_id"):
         return None
     role = str(event.get("agent_type") or "")
-    return role if role in cfg["roles"] else None
+    if role in cfg["roles"]:
+        return role
+    short = role.rsplit(":", 1)[-1]
+    return short if short in cfg["roles"] else None
+
+
+def own_install(path):
+    """An absolute path inside the plugin's own folder (installed as a plugin, outside the project)."""
+    if not _paths.is_plugin() or not isinstance(path, str) or not os.path.isabs(path):
+        return False
+    package = os.path.realpath(_paths.PACKAGE_ROOT)
+    full = os.path.realpath(path)
+    return full == package or full.startswith(package + os.sep)
 
 
 def protect_decision(event, cfg):
@@ -730,6 +753,8 @@ def protect_decision(event, cfg):
                 d = path_decision(rel, cfg, role)
                 if d:
                     decisions.append(d)
+            elif cfg["protect_setup"] and own_install(p):
+                decisions.append((cfg["setup_decision"], MSG["setup"].format(path=p)))
     if not decisions:
         return None
     return next((d for d in decisions if d[0] == "deny"), decisions[0])
@@ -747,6 +772,7 @@ def protect(event, cfg):
 def turn(event, cfg):
     """UserPromptSubmit: snapshot at the start of the turn. Prints nothing (it would go into context)."""
     cleanup_old()
+    _paths.write_shield_pointer(ROOT)
     snap = git_snapshot()
     with state_lock(event):
         # edits recorded by a background subagent after the last Stop (not yet gated) carry over
@@ -772,8 +798,12 @@ def record(event, cfg):
 
 
 def environment(cfg):
+    """A gate's environment. GUARDRAILS_BIN is the folder of these scripts, wherever they're installed, so a
+    gate can say `python3 "$GUARDRAILS_BIN/shield.py" gate`; GUARDRAILS_ROOT is the project root."""
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join(cfg["extra_paths"] + [env.get("PATH", "")])
+    env["GUARDRAILS_ROOT"] = ROOT
+    env["GUARDRAILS_BIN"] = _paths.SCRIPTS
     return env
 
 
@@ -931,6 +961,7 @@ def check(argv):
     a = ap.parse_args(argv)
     print(f"project root : {ROOT}")
     print(f"config       : {CONFIG_PATH}")
+    print(f"scripts      : {_paths.SCRIPTS} ({'plugin' if _paths.is_plugin() else 'copied into the project'})")
     cfg, error = load_config()
     if error:
         print(f"PROBLEM: cannot read config: {error}")
@@ -1003,6 +1034,12 @@ def check(argv):
 def main():
     sub = sys.argv[1] if len(sys.argv) > 1 else ""
     if sub == "check":
+        root = _paths.project_root()
+        if root is None:
+            print("PROBLEM: no guardrails.json in this folder or above it; the hooks do nothing here. "
+                  "Create one with the plugin's init command (/code-guardrails:init).")
+            return 1
+        set_root(root)
         return check(sys.argv[2:])
     handlers = {"protect": protect, "record": record, "gates": gates, "turn": turn}
     if sub not in handlers:
@@ -1014,6 +1051,10 @@ def main():
         event = {}
     if not isinstance(event, dict):
         event = {}
+    root = _paths.project_root(event.get("cwd") if isinstance(event.get("cwd"), str) else None)
+    if root is None or _paths.yields_to_copy(root):
+        return 0  # plugin install: no guardrails.json here, or the project's own copy is already wired in
+    set_root(root)
     try:
         cfg, error = load_config()
         if error:

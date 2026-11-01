@@ -1,0 +1,3 @@
+#!/bin/sh
+# code-guardrails plugin: on the Bash tool's PATH inside Claude Code.
+exec python3 "$(dirname "$0")/../guardrails/deletion_guard.py" "$@"

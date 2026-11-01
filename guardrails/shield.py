@@ -11,7 +11,8 @@ and the tests that protect it. A region lock covers the lines BETWEEN two marker
     ...                        ...
     // SHIELD-END: <name>      # SHIELD-END: <name>
 
-Commands (from the project root):
+Commands (from the project root; installed as a plugin, the script is in the plugin's folder and the
+messages below show its full path):
     python3 guardrails/shield.py check              working tree: 0 clean, 1 unapproved change or deletion
     python3 guardrails/shield.py check --index      what is about to be committed (git pre-commit hook)
     python3 guardrails/shield.py refs prepared      new commits entering a branch or HEAD (git
@@ -41,7 +42,10 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = os.environ.get("GUARDRAILS_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.dont_write_bytecode = True
+import _paths  # noqa: E402  (next to this script)
+
+ROOT = _paths.project_root()
 LOCKS = "shield.json"
 LOG = os.path.join("docs", "SHIELD_LOG.md")
 COMMENT = r"(?://|#|--|;|<!--|/\*|\*)"
@@ -189,10 +193,11 @@ def check(data, index=False, quiet=False):
 
 def guidance(violations):
     names = " ".join(sorted({v.split()[1].rstrip(":") for v in violations}))
+    cli = _paths.command("shield.py", ROOT)
     print("\nLocked critical code was changed or deleted. If that wasn't intentional, REVERT it (look at git diff).")
     print("If it was: run the lock tests first, then approve with a reason (this asks the user):")
-    print(f"  python3 guardrails/shield.py test {names}")
-    print(f"  python3 guardrails/shield.py approve {names} --reason \"<what changed and why>\"")
+    print(f"  {cli} test {names}")
+    print(f"  {cli} approve {names} --reason \"<what changed and why>\"")
 
 
 def new_commits(lines):
@@ -308,7 +313,7 @@ def write_log(lines):
     with open(path, "a", encoding="utf-8") as f:
         if new:
             f.write("# Code shield log\n\n")
-            f.write("Every intentional change to locked critical code (`guardrails/shield.py approve`). "
+            f.write("Every intentional change to locked critical code (`shield.py approve`). "
                     "Historical record; the current lock list is `shield.json`.\n\n")
             f.write("| time (UTC) | lock | fingerprint | commit | reason |\n|---|---|---|---|---|\n")
         for s in lines:
@@ -437,6 +442,9 @@ def main():
 
 
 if __name__ == "__main__":
+    if ROOT is None:
+        print("shield: no guardrails.json in this folder or above it (no project to check)", file=sys.stderr)
+        sys.exit(3)
     try:
         sys.exit(main())
     except RuntimeError as e:

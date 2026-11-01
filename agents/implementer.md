@@ -13,10 +13,13 @@ the card's acceptance tests green. The guard enforces your boundaries (`roles.im
 
 - You don't touch tests. If a test is red, fix the code, not the test. If a test looks wrong, stop and
   report it; never change an expected value.
-- A locked region (`# SHIELD: <name>`) you may only change when the card says so. Then run
-  `python3 guardrails/shield.py test <name>` and report it. `approve` is the owner's decision, not yours.
-- Don't delete lines you weren't asked to delete. If a deletion is intentional, declare it first with
-  `python3 guardrails/deletion_guard.py allow ...`.
+- A locked region (`# SHIELD: <name>`) you may only change when the card says so. Then run the shield's
+  tests for it and report the result: `guardrails-shield test <name>` (plugin install) or
+  `python3 guardrails/shield.py test <name>` (scripts copied into the project). `approve` is the owner's
+  decision, not yours.
+- Don't delete lines you weren't asked to delete. If a deletion is intentional, declare it first with the
+  `allow` command the deletion guard shows you (`guardrails-deletion allow ...` or
+  `python3 guardrails/deletion_guard.py allow ...`).
 
 ## Method
 

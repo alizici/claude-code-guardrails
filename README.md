@@ -4,7 +4,12 @@
 
 AI coding agents are fast. The problem isn't speed, it's the silent damage: a guard clause that disappears during a "cleanup", a test that gets weakened until it passes, a generated file edited by hand, a critical rule rewritten while the agent was fixing something else. You usually find out weeks later.
 
-This repository is the guardrail system I built and use daily on my own projects (a Flutter/Dart monorepo and a real-time multiplayer game with a .NET server). It's extracted, made language-agnostic and documented here.
+This repository is the guardrail system I built and use daily on my own projects (a Flutter/Dart monorepo and a real-time multiplayer game with a .NET server). It's extracted, made language-agnostic and documented here, and it installs as a Claude Code plugin.
+
+```
+/plugin install code-guardrails --marketplace alizici/claude-code-guardrails
+/code-guardrails:init
+```
 
 ```
                     ┌──────────────────────────────────────────────────────────────┐
@@ -54,28 +59,78 @@ For the code that must never change silently: money rules, protocol encoders, de
 - An approved change isn't trusted until its lock tests pass: the end-of-turn gate runs them for every unverified lock.
 - Two git hooks: `pre-commit` and `reference-transaction`. The second one exists because cherry-pick, revert, rebase, am, merge and `commit -n` skip `pre-commit`. In practice a cherry-pick once committed an unapproved lock change; this closes that path.
 
-### 4. Role agents · [`.claude/agents/`](.claude/agents/)
+### 4. Role agents · [`agents/`](agents/)
 
 A card pipeline where no agent grades its own work:
 
 | Role | Does | Can write |
 |---|---|---|
-| [`card-auditor`](.claude/agents/card-auditor.md) | Checks the task card before coding: missing decisions, invented expected values, uncovered branches | nothing (report only) |
-| [`test-writer`](.claude/agents/test-writer.md) | Writes the acceptance tests first and shows them **red** | tests only (+ empty stubs) |
-| [`implementer`](.claude/agents/implementer.md) | Smallest correct code that turns them green; writes open questions down instead of guessing | production code only |
-| [`reviewer`](.claude/agents/reviewer.md) | Clean context, never sees the implementer's reasoning; measures test strength with mutants | nothing (report only) |
+| [`card-auditor`](agents/card-auditor.md) | Checks the task card before coding: missing decisions, invented expected values, uncovered branches | nothing (report only) |
+| [`test-writer`](agents/test-writer.md) | Writes the acceptance tests first and shows them **red** | tests only (+ empty stubs) |
+| [`implementer`](agents/implementer.md) | Smallest correct code that turns them green; writes open questions down instead of guessing | production code only |
+| [`reviewer`](agents/reviewer.md) | Clean context, never sees the implementer's reasoning; measures test strength with mutants | nothing (report only) |
 
 The boundaries in the right column aren't instructions the model may forget: they're enforced by the guard hook.
 
-## Quick start
+## Install as a Claude Code plugin
 
-Requirements: Python 3.9+, git, Claude Code.
+Requirements: Python 3.9+, git, Claude Code 2.1.275 or later for the one-step install.
+
+In Claude Code:
+
+```
+/plugin install code-guardrails --marketplace alizici/claude-code-guardrails
+```
+
+or in two steps, which also works on older versions and from a terminal:
+
+```bash
+claude plugin marketplace add alizici/claude-code-guardrails
+claude plugin install code-guardrails@alizici
+```
+
+Then, in each project you want guarded:
+
+```
+/code-guardrails:init
+```
+
+`init` detects the stack (Flutter/Dart, Python, Node, Swift), writes a starter `guardrails.json` and `shield.json`, and installs the shield's git hooks. Review the gates it proposes against how your project really runs its tests.
+
+**The plugin is opt-in per project.** Its hooks do nothing in a project without a `guardrails.json`, so installing it at user scope is safe: other projects aren't touched, and no snapshots are taken there.
+
+What the plugin adds:
+
+| Part | What it is |
+|---|---|
+| hooks | the guard, the deletion guard and the end-of-turn gates ([`hooks/hooks.json`](hooks/hooks.json)) |
+| agents | `code-guardrails:card-auditor`, `test-writer`, `implementer`, `reviewer`; their write boundaries come from `roles` in your `guardrails.json` |
+| skills | `/code-guardrails:init`, `/code-guardrails:check` (is it set up right, what would the guard do), `/code-guardrails:lock` (put critical code under the shield) |
+| commands | `guardrails-check`, `guardrails-shield`, `guardrails-deletion`, `guardrails-init`, on the Bash tool's PATH inside Claude Code |
+
+Ask the guard what it would do:
+
+```bash
+guardrails-check --file lib/model.g.dart
+guardrails-check --command 'echo x > src/pricing.py' --role test-writer
+guardrails-shield list
+```
+
+Updates: third-party marketplaces don't auto-update by default. Run `/plugin marketplace update alizici`, or turn on auto-update for it under `/plugin` → Marketplaces.
+
+A gate that needs the shield calls it through `$GUARDRAILS_BIN`, the scripts' folder wherever the plugin is installed: `"run": "python3 \"$GUARDRAILS_BIN/shield.py\" gate"`.
+
+## Or copy it into the project
+
+No plugin, everything in the repository (useful when the whole team must get the guard from git):
 
 ```bash
 # 1. copy into your project
 cp -r guardrails/ /path/to/project/
 cp guardrails.json shield.json /path/to/project/
-cp -r .claude/ /path/to/project/        # hook wiring + role agents (merge if you already have settings)
+mkdir -p /path/to/project/.claude
+cp .claude/settings.json /path/to/project/.claude/   # hook wiring (merge if you already have settings)
+cp -r agents/ /path/to/project/.claude/agents/       # role agents
 
 # 2. adapt guardrails.json (generated paths, gates, roles) and shield.json (runners, locks), then validate
 cd /path/to/project
@@ -86,13 +141,7 @@ python3 guardrails/deletion_guard.py selftest        # last line must be "ok"
 sh guardrails/install_git_hooks.sh
 ```
 
-Ask the guard what it would do:
-
-```bash
-python3 guardrails/guard.py check --file lib/model.g.dart
-python3 guardrails/guard.py check --command 'echo x > src/pricing.py' --role test-writer
-python3 guardrails/shield.py list
-```
+Use one or the other. If a project has its own copy wired into `.claude/settings.json`, the plugin's hooks step aside there, so nothing is checked twice.
 
 ## Try it on the demo
 
@@ -128,7 +177,7 @@ git checkout examples/demo/src/pricing.py
 python3 -m unittest discover -s tests
 ```
 
-41 tests, each against a throwaway git repository: protection decisions, shell parsing, role boundaries, gate blocking and loop protection, the shield's pre-commit **and** cherry-pick paths, deletion detection, moves vs. deletions, and restore. Each guard was also checked by breaking it on purpose and watching its test go red. The guard's `check` command additionally runs a concurrency test: 32 parallel hook processes writing the same session state, a real failure mode once 10–20 subagents run at the same time.
+50 tests, each against a throwaway git repository: protection decisions, shell parsing, role boundaries, gate blocking and loop protection, the shield's pre-commit **and** cherry-pick paths, deletion detection, moves vs. deletions, restore, and the plugin install (the hooks run with the exact commands from `hooks/hooks.json`, against a project that only has the config files). Each guard was also checked by breaking it on purpose and watching its test go red. The guard's `check` command additionally runs a concurrency test: 32 parallel hook processes writing the same session state, a real failure mode once 10–20 subagents run at the same time.
 
 ## Design notes
 

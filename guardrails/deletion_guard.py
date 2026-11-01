@@ -51,8 +51,9 @@ import tempfile
 import time
 
 sys.dont_write_bytecode = True
+import _paths  # noqa: E402  (next to this script)
 
-CONFIG_FILE = "guardrails.json"
+CONFIG_FILE = _paths.CONFIG
 DEFAULTS = {
     "watched": ["**/*.dart", "**/*.py", "**/*.swift", "**/*.kt", "**/*.kts", "**/*.ts", "**/*.tsx",
                 "**/*.js", "**/*.jsx", "**/*.go", "**/*.rs", "**/*.java", "**/*.sh", "**/*.md",
@@ -360,9 +361,14 @@ def line_list(records, limit):
     return "\n".join(lines)
 
 
+def cli():
+    """This script as the agent should call it from the project root."""
+    return _paths.command("deletion_guard.py", ROOT)
+
+
 def allow_command(rel, sample):
-    return ('python3 guardrails/deletion_guard.py allow %s --line "%s" --reason "<why>"'
-            % (rel, sample.strip()[:40].replace('"', '\\"')))
+    return ('%s allow %s --line "%s" --reason "<why>"'
+            % (cli(), rel, sample.strip()[:40].replace('"', '\\"')))
 
 
 # ---------------------------------------------------------------- events
@@ -415,8 +421,8 @@ def on_before(event):
     if tool == "Write" and undeclared and cfg["rewrite"] == "deny":
         return deny("Deletion guard: rewriting the existing file %s with Write deletes %d lines:\n%s\n"
                     "Make the change with Edit. If you really are rewriting the file from scratch, declare it first:\n"
-                    '  python3 guardrails/deletion_guard.py allow %s --all --reason "<why>"'
-                    % (rel, len(undeclared), line_list(undeclared, cfg["summary_lines"]), rel))
+                    '  %s allow %s --all --reason "<why>"'
+                    % (rel, len(undeclared), line_list(undeclared, cfg["summary_lines"]), cli(), rel))
     important = [(rel, no, t) for no, t, imp in dels if imp and not declared(t, rel, items)]
     if important and cfg["important_deletion"] == "deny":
         return deny("Deletion guard: this edit deletes %d important lines without a declaration:\n%s\n"
@@ -544,11 +550,11 @@ def on_gate(event):
                     "Deletion guard: %d important lines disappeared this turn without a declaration "
                     "(turn start version %s):\n%s\n"
                     "If they went by mistake, put them back; to restore a file to the turn start:\n"
-                    "  python3 guardrails/deletion_guard.py restore %s %s\n"
+                    "  %s restore %s %s\n"
                     "If you deleted them on purpose, declare it:\n  %s\n"
                     "If you didn't delete these lines, tell the user."
                     % (len(undeclared), start_version, line_list(undeclared, cfg["summary_lines"]),
-                       start_version, first[0], allow_command(first[0], first[2]))}
+                       cli(), start_version, first[0], allow_command(first[0], first[2]))}
         log("gate: no progress or max blocks reached, warning: %s" % summary)
         return {"systemMessage": summary + " — WARNING: undeclared important deletions remain; see "
                                            "`deletion_guard.py history`."}
@@ -712,9 +718,12 @@ def main():
     sub = sys.argv[1] if len(sys.argv) > 1 else ""
     if sub == "selftest":
         return selftest()
-    root = os.environ.get("GUARDRAILS_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     manual = {"allow": cmd_allow, "history": cmd_history, "show": cmd_show, "restore": cmd_restore}
     if sub in manual:
+        root = _paths.project_root()
+        if root is None:
+            print("no guardrails.json in this folder or above it")
+            return 1
         if not setup(root):
             print("not a git repository")
             return 1
@@ -729,10 +738,16 @@ def main():
         event = json.load(sys.stdin)
     except ValueError:
         event = {}
+    if not isinstance(event, dict):
+        event = {}
+    root = _paths.project_root(event.get("cwd") if isinstance(event.get("cwd"), str) else None)
+    # guardrails.json is the opt-in: no config, no snapshots and no checks in this project
+    if root is None or not os.path.isfile(os.path.join(root, CONFIG_FILE)) or _paths.yields_to_copy(root):
+        return 0
     try:
         if not setup(root):
             return 0
-        out = events[sub](event if isinstance(event, dict) else {})
+        out = events[sub](event)
         if out:
             sys.stdout.write(json.dumps(out, ensure_ascii=False))
     except Exception as e:  # noqa: BLE001 — never block on our own failure
