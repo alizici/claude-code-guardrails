@@ -1,0 +1,24 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "code-guardrails",
+  "displayName": "Claude Code Guardrails",
+  "version": "1.1.0",
+  "description": "Hooks, role agents and a code shield for using Claude Code on a real codebase: generated files stay read-only, important lines can't vanish undeclared, the turn can't end while a test is red, and locked critical code needs your approval to change.",
+  "author": {
+    "name": "Muhammed Ali Çınar",
+    "url": "https://github.com/alizici"
+  },
+  "homepage": "https://github.com/alizici/claude-code-guardrails",
+  "repository": "https://github.com/alizici/claude-code-guardrails",
+  "license": "MIT",
+  "keywords": [
+    "guardrails",
+    "hooks",
+    "safety",
+    "code-review",
+    "tdd",
+    "subagents",
+    "git-hooks",
+    "flutter"
+  ]
+}

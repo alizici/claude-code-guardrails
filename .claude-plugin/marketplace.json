@@ -1,0 +1,22 @@
+{
+  "name": "alizici",
+  "description": "Claude Code plugins by Muhammed Ali Çınar.",
+  "owner": {
+    "name": "Muhammed Ali Çınar",
+    "url": "https://github.com/alizici"
+  },
+  "plugins": [
+    {
+      "name": "code-guardrails",
+      "source": "./",
+      "description": "Hooks, role agents and a code shield that keep Claude Code from quietly breaking what already worked.",
+      "category": "development",
+      "tags": [
+        "guardrails",
+        "hooks",
+        "safety",
+        "tdd"
+      ]
+    }
+  ]
+}

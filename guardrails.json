@@ -39,18 +39,21 @@
 
   "ask": [
     {
-      "pattern": "shield\\.py\\b.*\\bapprove\\b",
+      "pattern": "(?:shield\\.py|guardrails-shield)\\b.*\\bapprove\\b",
       "reason": "Approving a change to locked critical code is the user's decision: check the reason and that the lock tests passed.",
       "examples": {
-        "match": ["python3 guardrails/shield.py approve discount-rule --reason \"x\""],
-        "no_match": ["python3 guardrails/shield.py test discount-rule", "grep approve guardrails/shield.py"]
+        "match": ["python3 guardrails/shield.py approve discount-rule --reason \"x\"",
+                  "guardrails-shield approve discount-rule --reason \"x\""],
+        "no_match": ["python3 guardrails/shield.py test discount-rule", "grep approve guardrails/shield.py",
+                     "guardrails-shield test discount-rule"]
       }
     }
   ],
 
   "ask_paths": [
     {"glob": "shield.json", "reason": "The lock list: loosening it or editing a fingerprint by hand is the user's decision."},
-    {"glob": ".claude/agents/**", "reason": "Role definitions: changing what a role may do is the user's decision."}
+    {"glob": ".claude/agents/**", "reason": "Role definitions: changing what a role may do is the user's decision."},
+    {"glob": "agents/**", "reason": "Role definitions (the plugin's agents): changing what a role may do is the user's decision."}
   ],
 
   "roles": {
@@ -81,7 +84,7 @@
     },
     {
       "name": "guardrails self-tests",
-      "on": ["guardrails/**", "tests/**"],
+      "on": ["guardrails/**", "tests/**", "hooks/**", "bin/**", ".claude-plugin/**"],
       "run": "python3 -m unittest discover -s tests -q",
       "timeout": 300
     }
