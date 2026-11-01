@@ -13,7 +13,7 @@ This repository is the guardrail system I built and use daily on my own projects
 
 ```
                     ┌──────────────────────────────────────────────────────────────┐
-  every tool call → │ guard.py protect     generated files · protected paths ·    │ → deny / ask / allow
+  every tool call → │ guard.py protect     generated files · protected paths ·     │ → deny / ask / allow
                     │                      blocked commands · role boundaries      │
                     │ deletion_guard.py    important lines can't vanish undeclared │
                     └──────────────────────────────────────────────────────────────┘
