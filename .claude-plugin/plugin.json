@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "code-guardrails",
   "displayName": "Claude Code Guardrails",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Hooks, role agents and a code shield for using Claude Code on a real codebase: generated files stay read-only, important lines can't vanish undeclared, the turn can't end while a test is red, and locked critical code needs your approval to change.",
   "author": {
     "name": "Muhammed Ali Çınar",
