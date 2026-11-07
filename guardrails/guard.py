@@ -17,9 +17,15 @@ project's `.claude/settings.json` (guardrails/ copied into the project):
   gates    Stop               Runs the gates triggered by files changed this turn. If a gate
                               fails, the turn can't end. It only blocks again when there was
                               progress since the last block, and at most `max_blocks` times.
+                              A gate blocks only once it has passed at least once in this
+                              project (it is "armed" by its first pass); before that a failure
+                              is a warning, since a gate that was never green can't report a
+                              regression (npm init's placeholder test script, pytest with no
+                              tests, a suite that was already red at setup).
 Manual:
   check [--file PATH] [--command CMD] [--tool NAME] [--role NAME]
                               Validates the config and shows the decision for a file or command.
+  probe [--timeout S]         Runs every gate once and arms the ones that pass (init does this).
 
 Hooks are a guardrail against accidents and shortcuts, not a security boundary: an indirect
 write (writing a script and running it) can't be detected up front. The end-of-turn gates
@@ -122,6 +128,12 @@ MSG = {
     ),
     "still_failing": "⚠ Gate still failing",
     "infra": "⚠ Gate could not run",
+    "unarmed": (
+        "⚠ Gate red, but it has never passed in this project, so this is not a regression from this turn "
+        "and the turn is not blocked. Do not try to make it pass by weakening anything; tell the user. "
+        "Once it passes (or its command in guardrails.json is fixed and passes), it arms itself and a later "
+        "failure blocks the turn"
+    ),
     "not_found": "`{tool}` not found",
     "no_script": "`{path}` does not exist",
     "timeout": "did not finish within {s} s",
@@ -386,10 +398,69 @@ def cleanup_old():
         now = time.time()
         for name in os.listdir(folder):
             p = os.path.join(folder, name)
-            if now - os.path.getmtime(p) > 7 * 86400:
+            if name.startswith("session-") and now - os.path.getmtime(p) > 7 * 86400:
                 os.remove(p)
     except OSError:
         pass
+
+
+# ── gate arming ──────────────────────────────────────────────────────────────
+# A gate is a regression detector: it blocks a turn that took it from green to red. A gate that has
+# never passed in this project (an `npm init` placeholder test script, pytest with no tests or not
+# installed, a suite that was already red when the guardrails were set up) can't report a regression,
+# so until its first pass a failure is a warning for the user, not a block. The first pass arms it,
+# for good. The record lives in the state folder (never committed) and is keyed by the gate's name
+# and command, so a changed command starts over as a new gate.
+
+
+def gate_key(gate):
+    run = gate["run"]
+    return gate["name"] + " :: " + (run if isinstance(run, str) else json.dumps(run))
+
+
+def arming_path():
+    return os.path.join(state_dir(), "gates.json")
+
+
+def armed_gates():
+    """{gate key: time of its first pass}."""
+    try:
+        with open(arming_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        armed = data.get("armed") if isinstance(data, dict) else None
+        return dict(armed) if isinstance(armed, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def is_armed(gate):
+    return gate_key(gate) in armed_gates()
+
+
+def arm(gate):
+    """Records the gate's first pass. Idempotent; safe with parallel hooks."""
+    path = arming_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".lock", "a") as lock:
+        if fcntl is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            armed = armed_gates()
+            if gate_key(gate) in armed:
+                return
+            armed[gate_key(gate)] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix="gates.json.", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump({"armed": armed}, f, indent=2)
+                os.replace(tmp, path)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.remove(tmp)
+                raise
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def git_snapshot():
@@ -878,10 +949,14 @@ def gates(event, cfg):
     if not pending:
         consume(event, state)
         return
-    failing, warnings = [], []
+    failing, unarmed, warnings = [], [], []
     for g in pending:
         result, detail = run_gate(g, cfg)
-        if result == "fail":
+        if result == "pass":
+            arm(g)
+        elif result == "fail" and not is_armed(g):
+            unarmed.append((g["name"], detail))
+        elif result == "fail":
             failing.append((g["name"], detail))
         elif result == "infra":
             warnings.append(f"{g['name']}: {detail}")
@@ -907,10 +982,39 @@ def gates(event, cfg):
     parts = []
     if failing:
         parts.append(MSG["still_failing"] + ":\n" + "\n\n".join(f"{n}:\n{d}" for n, d in failing))
+    if unarmed:
+        parts.append(MSG["unarmed"] + ":\n" + "\n\n".join(f"{n}:\n{d}" for n, d in unarmed))
     if warnings:
         parts.append(MSG["infra"] + ": " + " · ".join(warnings))
     if parts:
         emit({"systemMessage": "\n\n".join(parts)})
+
+
+def probe(argv):
+    """Runs every gate once on the tree as it is and arms the ones that pass. init calls it, so a
+    green suite is armed before the agent's first turn; it is also the way to arm gates by hand."""
+    ap = argparse.ArgumentParser(prog="guard.py probe", description="Runs every gate once; a passing gate is armed.")
+    ap.add_argument("--timeout", type=int, default=120, help="seconds per gate (default 120, at most the gate's own)")
+    a = ap.parse_args(argv)
+    cfg, error = load_config()
+    if error or cfg is None:
+        print(f"PROBLEM: cannot read config: {error or 'no config file'}")
+        return 1
+    red = 0
+    for g in cfg["gates"]:
+        bounded = dict(g, timeout=max(1, min(int(g["timeout"]), a.timeout)))
+        result, detail = run_gate(bounded, cfg)
+        if result == "pass":
+            arm(g)
+            print(f"gate       : {g['name']} · pass · armed")
+        elif result == "fail":
+            red += 1
+            tail = last_lines(detail, 1)
+            print(f"gate       : {g['name']} · RED on the current tree ({tail}) · not armed: it warns, "
+                  f"not blocks, until it passes once")
+        else:
+            print(f"gate       : {g['name']} · could not run ({detail}) · not armed yet")
+    return 0
 
 
 def concurrency_selftest(n=32):
@@ -997,7 +1101,9 @@ def check(argv):
                                      or first in SHELL_BUILTINS)
         else:
             found = argv_for(run, env)[0] is not None
-        print(f"gate         : {g['name']} · on {g['on_raw']} · run {run} · {'tool found' if found else 'TOOL NOT FOUND'}")
+        armed = "armed" if is_armed(g) else "not armed yet (warns until its first pass; `guard.py probe` runs it now)"
+        print(f"gate         : {g['name']} · on {g['on_raw']} · run {run} · {'tool found' if found else 'TOOL NOT FOUND'}"
+              f" · {armed}")
         if not found:
             problems.append(f"gate `{g['name']}`: the command's tool is not on PATH (add it to extra_paths)")
         script = missing_script(run)
@@ -1041,9 +1147,16 @@ def main():
             return 1
         set_root(root)
         return check(sys.argv[2:])
+    if sub == "probe":
+        root = _paths.project_root()
+        if root is None:
+            print("PROBLEM: no guardrails.json in this folder or above it.")
+            return 1
+        set_root(root)
+        return probe(sys.argv[2:])
     handlers = {"protect": protect, "record": record, "gates": gates, "turn": turn}
     if sub not in handlers:
-        print("usage: guard.py turn|protect|record|gates|check", file=sys.stderr)
+        print("usage: guard.py turn|protect|record|gates|check|probe", file=sys.stderr)
         return 1
     try:
         event = json.load(sys.stdin)

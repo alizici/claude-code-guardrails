@@ -150,6 +150,7 @@ def guard_config(stacks):
                 ", ".join(n for n, _ in stacks) or "no known stack"),
             "Validate after every change with the plugin's check command (last line must be 'ok').",
             "Gate exit 0 = pass; 3, 126, 127, missing tool and timeout = warning only; anything else = failing (the turn can't end).",
+            "A gate blocks only after it has passed once in this project; until then a failure is a warning (it was never green, so nothing regressed).",
             "$GUARDRAILS_BIN in a gate command is the folder of the guardrails scripts, wherever the plugin is installed.",
         ],
         "generated": {"paths": generated, "regenerate": regenerate},
@@ -232,6 +233,13 @@ def main():
             print(f"git hooks  : {line}")
         if r.returncode != 0:
             return 1
+    # Run each gate once on the untouched tree: a green gate is armed before the agent's first turn, and a
+    # red one (npm init's placeholder test script, pytest with no tests) is reported here instead of
+    # blocking the agent later for a failure it didn't cause.
+    r = subprocess.run([sys.executable, os.path.join(_paths.SCRIPTS, "guard.py"), "probe"], cwd=root,
+                       capture_output=True, text=True, env={**os.environ, "GUARDRAILS_ROOT": root})
+    for line in (r.stdout + r.stderr).strip().splitlines():
+        print(line)
     print("next       : review guardrails.json (gates, generated paths, roles), then run the check command")
     return 0
 
