@@ -1,4 +1,6 @@
+import json
 import os
+import time
 import unittest
 
 from helpers import GUARD, Project
@@ -110,13 +112,67 @@ class GuardTests(unittest.TestCase):
     def stop(self):
         return self.p.hook(GUARD, "gates", {"session_id": "s"})[1]
 
+    def arm(self):
+        """The gate passes once, so it is armed: what `init` does on a green project."""
+        self.p.write("lib/ok", "")
+        r = self.p.run(GUARD, "probe")
+        self.assertIn("tests · pass · armed", r.stdout, r.stdout + r.stderr)
+        os.remove(self.p.path("lib/ok"))
+
     def test_failing_gate_blocks_the_turn(self):
+        self.arm()
         self.p.write("README.md", "x")
         self.p.commit_all()
         self.turn()
         self.p.write("lib/app.dart", "class App {}\n")  # changed with any tool, even a shell
         out = self.stop()
         self.assertEqual(out and out.get("decision"), "block")
+
+    def test_never_green_gate_warns_instead_of_blocking(self):
+        # npm init's placeholder test script, pytest with no tests: red before the agent changed anything,
+        # so a red result is not a regression and must not block the agent (issue #2)
+        self.p.write("README.md", "x")
+        self.p.commit_all()
+        self.turn()
+        self.p.write("lib/app.dart", "class App {}\n")
+        out = self.stop()
+        self.assertNotEqual(out and out.get("decision"), "block")
+        self.assertIn("never passed", out["systemMessage"])
+        self.assertIn("tests:", out["systemMessage"])
+
+    def test_first_pass_arms_the_gate(self):
+        self.p.write("README.md", "x")
+        self.p.commit_all()
+        self.turn()
+        self.p.write("lib/app.dart", "class App {}\n")
+        self.p.write("lib/ok", "")
+        self.assertIsNone(self.stop())  # green: the gate arms itself
+        os.remove(self.p.path("lib/ok"))
+        self.turn()
+        self.p.write("lib/app.dart", "class App { int x = 1; }\n")
+        self.assertEqual(self.stop().get("decision"), "block")
+
+    def test_changed_gate_command_starts_unarmed(self):
+        self.arm()
+        cfg = dict(CONFIG, gates=[{"name": "tests", "on": ["lib/**"], "run": "test -f lib/ok2", "timeout": 30}])
+        self.p.write("guardrails.json", json.dumps(cfg))
+        self.p.write("README.md", "x")
+        self.p.commit_all()
+        self.turn()
+        self.p.write("lib/app.dart", "class App {}\n")
+        out = self.stop()
+        self.assertNotEqual(out and out.get("decision"), "block")
+        self.assertIn("never passed", out["systemMessage"])
+
+    def test_arming_outlives_the_session_state_cleanup(self):
+        self.arm()
+        old = time.time() - 30 * 86400
+        os.utime(self.p.path(".git/guardrails/gates.json"), (old, old))
+        self.p.write("README.md", "x")
+        self.p.commit_all()
+        self.turn()  # cleans up old session files; the arming record is not one of them
+        self.p.write("lib/app.dart", "class App {}\n")
+        self.assertEqual(self.stop().get("decision"), "block")
 
     def test_passing_gate_lets_the_turn_end(self):
         self.p.write("README.md", "x")
@@ -134,6 +190,7 @@ class GuardTests(unittest.TestCase):
         self.assertIsNone(self.stop())
 
     def test_no_progress_means_no_endless_block(self):
+        self.arm()
         self.p.write("README.md", "x")
         self.p.commit_all()
         self.turn()

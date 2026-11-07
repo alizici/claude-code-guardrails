@@ -2,7 +2,8 @@
   "_info": [
     "Guard config read by guardrails/guard.py and guardrails/deletion_guard.py. Keys starting with '_' are ignored.",
     "Validate after every change: python3 guardrails/guard.py check  (last line must be 'ok').",
-    "Gate exit 0 = pass; 3, 126, 127, missing tool and timeout = warning only; anything else = failing (the turn can't end)."
+    "Gate exit 0 = pass; 3, 126, 127, missing tool and timeout = warning only; anything else = failing (the turn can't end).",
+    "A gate blocks only after it has passed once in this project; until then a failure is a warning (it was never green, so nothing regressed)."
   ],
 
   "generated": {

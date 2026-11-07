@@ -128,6 +128,30 @@ class PluginProject(unittest.TestCase):
         r = self.bin("guardrails-check")
         self.assertEqual(r.stdout.strip().splitlines()[-1], "ok", r.stdout + r.stderr)
 
+    def test_npm_init_placeholder_test_script_never_blocks(self):
+        # issue #2: `npm init` writes a test script that always exits 1; the gate must not block the agent for it
+        self.write("package.json", json.dumps({"name": "x", "scripts": {"test": 'echo "Error: no test specified" && exit 1'}}))
+        out = self.init("--no-git-hooks")
+        self.assertIn("Node", out)
+        self.assertIn("npm test · RED on the current tree", out)
+        self.hook("UserPromptSubmit", "guard.py", {})
+        self.write("src/index.js", "module.exports = 1;\n")
+        out = self.hook("Stop", "guard.py", {})
+        self.assertNotEqual((out or {}).get("decision"), "block")
+        self.assertIn("never passed", out["systemMessage"])
+        self.assertIn("no test specified", out["systemMessage"])
+
+    def test_python_project_without_tests_never_blocks(self):
+        # pytest exits 5 with no tests (or 1 when not installed): red before anything was changed
+        self.write("requirements.txt", "requests\n")
+        out = self.init("--no-git-hooks")
+        self.assertIn("python tests · RED on the current tree", out)
+        self.hook("UserPromptSubmit", "guard.py", {})
+        self.write("src/app.py", "x = 1\n")
+        out = self.hook("Stop", "guard.py", {})
+        self.assertNotEqual((out or {}).get("decision"), "block")
+        self.assertIn("never passed", out["systemMessage"])
+
     # --- guard ------------------------------------------------------------------
 
     def test_guard_protects_the_project_not_the_plugin(self):
@@ -153,13 +177,18 @@ class PluginProject(unittest.TestCase):
             {"name": "env", "on": ["lib/**"], "timeout": 30,
              "run": '[ "$GUARDRAILS_ROOT" = "$(pwd -P)" ] && [ -f "$GUARDRAILS_BIN/shield.py" ] || '
                     '{ echo "GUARDRAILS_ROOT=$GUARDRAILS_ROOT GUARDRAILS_BIN=$GUARDRAILS_BIN"; exit 1; }'},
-            {"name": "red", "on": ["red/**"], "run": "echo red test; exit 1", "timeout": 30}]}))
+            {"name": "red", "on": ["red/**"], "run": "test -f red/ok", "timeout": 30}]}))
         self.hook("UserPromptSubmit", "guard.py", {})
         self.write("lib/app.dart", "class App {}\n")
         self.assertIsNone(self.hook("Stop", "guard.py", {}))
-        # control: a failing gate does block, so the gate above really ran
+        # control: a failing gate does block (once armed by a first pass), so the gate above really ran
+        self.write("red/ok", "")
         self.hook("UserPromptSubmit", "guard.py", {})
         self.write("red/x.txt", "x")
+        self.assertIsNone(self.hook("Stop", "guard.py", {}))
+        os.remove(self.path("red/ok"))
+        self.hook("UserPromptSubmit", "guard.py", {})
+        self.write("red/x.txt", "y")
         out = self.hook("Stop", "guard.py", {})
         self.assertEqual((out or {}).get("decision"), "block")
 

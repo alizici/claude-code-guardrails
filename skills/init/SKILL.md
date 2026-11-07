@@ -11,6 +11,10 @@ The plugin's hooks do nothing in a project until it has a `guardrails.json`. Thi
    `guardrails.json` and `shield.json`, and installs the code shield's git hooks (`pre-commit` and
    `reference-transaction`; an existing hook is backed up, never overwritten). It never overwrites an
    existing `guardrails.json` or `shield.json`. Add `--no-git-hooks` if the user doesn't want git hooks.
+   It ends by running each gate once: `pass · armed` means the gate now blocks regressions; `RED on the
+   current tree` means the test command fails before anything was changed (often a placeholder test
+   script or no tests yet). A red gate warns instead of blocking until it passes once, so don't try to
+   make it pass: tell the user, and fix the command in step 2 if it is simply wrong.
 2. Read the new `guardrails.json` and check it against the project:
    - `gates`: does each test command match how this project really runs its tests (look at CI config,
      Makefile, package scripts, melos/workspace setup)? Monorepos usually need one gate per package with

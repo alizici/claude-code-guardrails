@@ -38,7 +38,7 @@ Runs on every tool call and at the end of every turn.
 - **Blocked and ask-first commands.** Force push, `--no-verify`, `reset --hard`… each rule carries its own `match` / `no_match` examples, and `guard.py check` verifies them (a real bug this caught: a force-push pattern also matched `git worktree remove --force` later on the same line).
 - **Shell commands are parsed for write targets.** Redirects, `cp`/`mv`/`rm`/`tee`/`sed -i`, `git checkout --`, formatters with `--write`, and `python -c`/`node -e` one-liners that open a file for writing. Quotes and heredocs are handled, so `echo 'a > b'` isn't a write.
 - **Role boundaries for subagents.** A test writer can only write tests, an implementer can't touch tests, an auditor or reviewer can't write in the project at all. Roles are config, not code.
-- **End-of-turn gates.** Each gate has trigger globs and a command. Files changed in the turn (by any tool, found via a git snapshot taken at the start of the turn) decide which gates run. A failing gate blocks the end of the turn with the failure output. The agent is told not to weaken the test to pass. Loop protection: it only blocks again when the working tree changed since the last block, and at most `max_blocks` times.
+- **End-of-turn gates.** Each gate has trigger globs and a command. Files changed in the turn (by any tool, found via a git snapshot taken at the start of the turn) decide which gates run. A failing gate blocks the end of the turn with the failure output. The agent is told not to weaken the test to pass. Loop protection: it only blocks again when the working tree changed since the last block, and at most `max_blocks` times. A gate is a regression detector, so it blocks only once it has passed at least once in this project (its first pass *arms* it; `init` runs every gate once for that). A gate that was never green (npm init's placeholder test script, pytest with no tests, a suite that was already red at setup) warns the user instead of blocking the agent for a failure it didn't cause.
 - **Never blocks on its own failure.** A missing tool, a timeout or a broken config is a warning, never a block. The script never exits with code 2 (Claude Code reads 2 as "block").
 
 ### 2. Deletion guard · [`guardrails/deletion_guard.py`](guardrails/deletion_guard.py)
@@ -95,7 +95,7 @@ Then, in each project you want guarded:
 /code-guardrails:init
 ```
 
-`init` detects the stack (Flutter/Dart, Python, Node, Swift), writes a starter `guardrails.json` and `shield.json`, and installs the shield's git hooks. Review the gates it proposes against how your project really runs its tests.
+`init` detects the stack (Flutter/Dart, Python, Node, Swift), writes a starter `guardrails.json` and `shield.json`, installs the shield's git hooks, and runs each gate once: a green gate is armed, a red one is reported (and stays a warning until it passes once). Review the gates it proposes against how your project really runs its tests.
 
 **The plugin is opt-in per project.** Its hooks do nothing in a project without a `guardrails.json`, so installing it at user scope is safe: other projects aren't touched, and no snapshots are taken there.
 
@@ -177,7 +177,7 @@ git checkout examples/demo/src/pricing.py
 python3 -m unittest discover -s tests
 ```
 
-50 tests, each against a throwaway git repository: protection decisions, shell parsing, role boundaries, gate blocking and loop protection, the shield's pre-commit **and** cherry-pick paths, deletion detection, moves vs. deletions, restore, and the plugin install (the hooks run with the exact commands from `hooks/hooks.json`, against a project that only has the config files). Each guard was also checked by breaking it on purpose and watching its test go red. The guard's `check` command additionally runs a concurrency test: 32 parallel hook processes writing the same session state, a real failure mode once 10–20 subagents run at the same time.
+56 tests, each against a throwaway git repository: protection decisions, shell parsing, role boundaries, gate blocking, arming and loop protection, the shield's pre-commit **and** cherry-pick paths, deletion detection, moves vs. deletions, restore, and the plugin install (the hooks run with the exact commands from `hooks/hooks.json`, against a project that only has the config files). Each guard was also checked by breaking it on purpose and watching its test go red. The guard's `check` command additionally runs a concurrency test: 32 parallel hook processes writing the same session state, a real failure mode once 10–20 subagents run at the same time.
 
 ## Design notes
 
